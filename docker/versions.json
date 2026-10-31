@@ -1,5 +1,6 @@
 {
   "openjet_commit": "ad5e66ef1235d665a8e7fb55bca6fddee295aa9c",
   "llama_cpp_ref": "b10246",
-  "llama_cpp_updated_at": "2026-10-30T00:00:00Z"
+  "llama_cpp_edge": "b12017",
+  "llama_cpp_edge_updated_at": "2026-10-30T00:00:00Z"
 }

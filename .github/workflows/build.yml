@@ -8,7 +8,11 @@ on:
         required: false
         default: ''
       llama_cpp_ref:
-        description: 'llama.cpp release tag or ref (leave blank to read from docker/versions.json)'
+        description: 'llama.cpp pinned release tag or ref (leave blank to read from docker/versions.json)'
+        required: false
+        default: ''
+      llama_cpp_edge:
+        description: 'llama.cpp edge release tag or ref (leave blank to read from docker/versions.json)'
         required: false
         default: ''
   workflow_call:
@@ -18,6 +22,10 @@ on:
         required: false
         default: ''
       llama_cpp_ref:
+        type: string
+        required: false
+        default: ''
+      llama_cpp_edge:
         type: string
         required: false
         default: ''
@@ -57,7 +65,7 @@ jobs:
           fi
           OPENJET_SHA7=$(echo "$OPENJET_COMMIT" | cut -c1-7)
 
-          # 2. Resolve llama.cpp ref
+          # 2. Resolve pinned llama.cpp ref
           INPUT_LLAMA="${{ inputs.llama_cpp_ref }}"
           if [ -n "$INPUT_LLAMA" ]; then
             LLAMA_REF="$INPUT_LLAMA"
@@ -68,25 +76,40 @@ jobs:
             LLAMA_REF="b10246"
           fi
 
+          # 3. Resolve edge llama.cpp ref
+          INPUT_EDGE="${{ inputs.llama_cpp_edge }}"
+          if [ -n "$INPUT_EDGE" ]; then
+            LLAMA_EDGE="$INPUT_EDGE"
+          else
+            LLAMA_EDGE=$(python3 -c "import json; print(json.load(open('docker/versions.json')).get('llama_cpp_edge', '').strip())" 2>/dev/null || echo "")
+          fi
+
           IMAGE_REPO="ghcr.io/websterwh/openjet-engine"
           VERSION_TAG="${IMAGE_REPO}:sha-${OPENJET_SHA7}-${LLAMA_REF}"
           LATEST_TAG="${IMAGE_REPO}:latest"
           PREVIOUS_TAG="${IMAGE_REPO}:previous"
+          EDGE_TAG="${IMAGE_REPO}:edge"
+          EDGE_VERSION_TAG="${IMAGE_REPO}:sha-${OPENJET_SHA7}-${LLAMA_EDGE}"
 
           echo "openjet_commit=$OPENJET_COMMIT" >> $GITHUB_OUTPUT
           echo "openjet_sha7=$OPENJET_SHA7" >> $GITHUB_OUTPUT
           echo "llama_ref=$LLAMA_REF" >> $GITHUB_OUTPUT
+          echo "llama_edge=$LLAMA_EDGE" >> $GITHUB_OUTPUT
           echo "image_repo=$IMAGE_REPO" >> $GITHUB_OUTPUT
           echo "version_tag=$VERSION_TAG" >> $GITHUB_OUTPUT
           echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
           echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+          echo "edge_tag=$EDGE_TAG" >> $GITHUB_OUTPUT
+          echo "edge_version_tag=$EDGE_VERSION_TAG" >> $GITHUB_OUTPUT
 
           echo "Resolved build references:"
-          echo "  OpenJet Commit: $OPENJET_COMMIT ($OPENJET_SHA7)"
-          echo "  llama.cpp Ref:  $LLAMA_REF"
-          echo "  Image Repo:     $IMAGE_REPO"
-          echo "  Version Tag:    $VERSION_TAG"
-          echo "  Latest Tag:     $LATEST_TAG"
+          echo "  OpenJet Commit:    $OPENJET_COMMIT ($OPENJET_SHA7)"
+          echo "  Pinned llama.cpp:  $LLAMA_REF"
+          echo "  Edge llama.cpp:    $LLAMA_EDGE"
+          echo "  Stable Tag:        $VERSION_TAG"
+          echo "  Latest Tag:        $LATEST_TAG"
+          echo "  Previous Tag:      $PREVIOUS_TAG"
+          echo "  Edge Tag:          $EDGE_TAG"
 
       - name: Fetch megakernel from upstream open-jet (sparse checkout)
         uses: actions/checkout@v4
@@ -113,7 +136,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and Push Versioned Image (linux/amd64 only)
+      # ========================================================================
+      # Part 1: Stable Build (Pinned LLAMA_CPP_REF) -> latest, previous, sha-...
+      # ========================================================================
+      - name: Build and Push Pinned Stable Image (linux/amd64 only)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -124,15 +150,14 @@ jobs:
             LLAMA_CPP_REF=${{ steps.vars.outputs.llama_ref }}
           push: true
           tags: ${{ steps.vars.outputs.version_tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=pinned
+          cache-to: type=gha,mode=max,scope=pinned
 
-      # Smoke tests require NO GPU (CPU-only verification)
-      - name: Run CPU Smoke Tests
+      - name: Run CPU Smoke Tests on Pinned Image
         env:
           VERSION_TAG: ${{ steps.vars.outputs.version_tag }}
         run: |
-          echo "Pulling versioned image for smoke verification: $VERSION_TAG"
+          echo "Pulling pinned image for smoke verification: $VERSION_TAG"
           docker pull "$VERSION_TAG"
 
           echo "=========================================================="
@@ -145,7 +170,7 @@ jobs:
           echo "=========================================================="
           docker run --rm --entrypoint bash "$VERSION_TAG" -c '
             set -euo pipefail
-            for arch in sm_86 sm_89 sm_120; do
+            for arch in sm86 sm89 sm120; do
               lib="/opt/open-jet/libs/libqwen38mk_${arch}.so"
               echo "Checking $lib..."
               if [ ! -f "$lib" ]; then
@@ -161,39 +186,31 @@ jobs:
           '
 
           echo "=========================================================="
-          echo " Smoke Test 3: Verify llama.cpp libraries load via ctypes"
+          echo " Smoke Test 3: Verify llama.cpp library loads and server module imports"
           echo "=========================================================="
           docker run --rm --entrypoint python3 "$VERSION_TAG" -c '
-          import ctypes
-          import os
+          import ctypes, os
+          import megakernel.server.mk_server as srv
 
           llama_path = "/opt/open-jet/llama.cpp/build/bin/libllama.so"
           if not os.path.exists(llama_path):
               raise FileNotFoundError(f"Missing {llama_path}")
 
           lib = ctypes.CDLL(llama_path)
-          assert lib is not None
-          print("SUCCESS: libllama.so loaded via ctypes successfully.")
-          '
-
-          echo "=========================================================="
-          echo " Smoke Test 4: Verify server module imports cleanly"
-          echo "=========================================================="
-          docker run --rm --entrypoint python3 "$VERSION_TAG" -c '
-          import megakernel.server.mk_server as srv
+          assert lib is not None, "Failed to load libllama.so"
           assert hasattr(srv, "main"), "mk_server missing main()"
           assert hasattr(srv, "Server"), "mk_server missing Server class"
-          print("SUCCESS: megakernel.server.mk_server imported successfully.")
+          print("SUCCESS: libllama.so loaded and megakernel.server.mk_server imported successfully.")
           '
 
-      - name: Retag previous and promote latest Tag
+      - name: Retag previous and promote latest Tag (from Pinned Build only)
         env:
           IMAGE_REPO: ${{ steps.vars.outputs.image_repo }}
           VERSION_TAG: ${{ steps.vars.outputs.version_tag }}
           LATEST_TAG: ${{ steps.vars.outputs.latest_tag }}
           PREVIOUS_TAG: ${{ steps.vars.outputs.previous_tag }}
         run: |
-          echo "Smoke tests passed. Retagging old latest as previous if it exists..."
+          echo "Pinned smoke tests passed. Retagging current latest as previous..."
           if docker pull "$LATEST_TAG"; then
             echo "Retagging current latest to $PREVIOUS_TAG..."
             docker tag "$LATEST_TAG" "$PREVIOUS_TAG"
@@ -203,10 +220,55 @@ jobs:
             echo "No existing latest tag found to retag."
           fi
 
-          echo "Promoting versioned image: Tagging $VERSION_TAG as $LATEST_TAG..."
+          echo "Promoting pinned version: Tagging $VERSION_TAG as $LATEST_TAG..."
           docker tag "$VERSION_TAG" "$LATEST_TAG"
           docker push "$LATEST_TAG"
           echo "Successfully promoted and pushed $LATEST_TAG."
+
+      # ========================================================================
+      # Part 2: Edge Build (Newest llama.cpp Release) -> edge, sha-<openjet7>-<edge>
+      # ========================================================================
+      - name: Build, Test and Promote Edge Image
+        if: steps.vars.outputs.llama_edge != '' && steps.vars.outputs.llama_edge != steps.vars.outputs.llama_ref
+        env:
+          EDGE_VERSION_TAG: ${{ steps.vars.outputs.edge_version_tag }}
+          EDGE_TAG: ${{ steps.vars.outputs.edge_tag }}
+          LLAMA_EDGE: ${{ steps.vars.outputs.llama_edge }}
+          OPENJET_COMMIT: ${{ steps.vars.outputs.openjet_commit }}
+        run: |
+          echo "Building edge image with llama.cpp ref: $LLAMA_EDGE..."
+          docker buildx build \
+            --platform linux/amd64 \
+            --build-arg OPENJET_COMMIT="$OPENJET_COMMIT" \
+            --build-arg LLAMA_CPP_REF="$LLAMA_EDGE" \
+            --file docker/Dockerfile \
+            --tag "$EDGE_VERSION_TAG" \
+            --tag "$EDGE_TAG" \
+            --push \
+            .
+
+          echo "Pulling edge image for smoke verification: $EDGE_TAG"
+          docker pull "$EDGE_TAG"
+
+          echo "Running smoke tests on Edge image..."
+          docker run --rm --entrypoint openjet-engine "$EDGE_TAG" --help
+          docker run --rm --entrypoint bash "$EDGE_TAG" -c '
+            set -euo pipefail
+            for arch in sm86 sm89 sm120; do
+              lib="/opt/open-jet/libs/libqwen38mk_${arch}.so"
+              if [ ! -f "$lib" ] || ldd "$lib" | grep "not found"; then
+                echo "ERROR: Unresolved dependencies in edge $lib" >&2
+                exit 1
+              fi
+            done
+          '
+          docker run --rm --entrypoint python3 "$EDGE_TAG" -c '
+          import ctypes, megakernel.server.mk_server as srv
+          lib = ctypes.CDLL("/opt/open-jet/llama.cpp/build/bin/libllama.so")
+          assert lib is not None and hasattr(srv, "main")
+          print("SUCCESS: Edge smoke tests passed.")
+          '
+          echo "SUCCESS: Edge build verified and pushed ($EDGE_TAG and $EDGE_VERSION_TAG)."
 
       - name: Job Summary on Success
         run: |
@@ -215,11 +277,13 @@ jobs:
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
           echo "| **Image** | \`${{ steps.vars.outputs.image_repo }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Version Tag** | \`${{ steps.vars.outputs.version_tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Stable Tag (Pinned)** | \`${{ steps.vars.outputs.version_tag }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Latest Tag** | \`${{ steps.vars.outputs.latest_tag }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Previous Tag** | \`${{ steps.vars.outputs.previous_tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Edge Tag** | \`${{ steps.vars.outputs.edge_tag }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **OpenJet Commit** | \`${{ steps.vars.outputs.openjet_commit }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **llama.cpp Ref** | \`${{ steps.vars.outputs.llama_ref }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Pinned llama.cpp** | \`${{ steps.vars.outputs.llama_ref }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Edge llama.cpp** | \`${{ steps.vars.outputs.llama_edge }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Smoke Tests Passed" >> $GITHUB_STEP_SUMMARY
           echo "- :heavy_check_mark: \`openjet-engine --help\` ran successfully" >> $GITHUB_STEP_SUMMARY

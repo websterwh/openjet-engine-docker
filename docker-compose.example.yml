@@ -22,11 +22,16 @@ services:
       - CTX=100000
       - DRAFT=4
       - KV=auto
+      # Serving concurrency and slot mode (PARALLEL and AGENTS are mutually exclusive; PARALLEL=1 is the tested default)
+      - PARALLEL=1
+      # - AGENTS=4
+      # - SHARED_CONTEXT=/models/shared_system_prompt.txt
+      # - NO_SHARED_PREFIX=0
       # Check / re-download model if updated on startup (1 = enabled, 0 = disable check if file exists)
       - UPDATE_MODEL=1
       # Optional: Hugging Face API token for gated repositories or higher rate limits
       # - HF_TOKEN=
-      # Optional: Additional CLI arguments passed to openjet-engine (e.g. --parallel 4, --no-shared-prefix)
+      # Optional: Additional CLI arguments passed to openjet-engine
       # - EXTRA_ARGS=
     volumes:
       # Directory where the GGUF model and Hugging Face cache are stored
