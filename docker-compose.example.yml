@@ -1,0 +1,40 @@
+services:
+  openjet:
+    image: ghcr.io/websterwh/openjet-engine:latest
+    container_name: openjet-megakernel
+    restart: unless-stopped
+    ports:
+      - "18080:18080"
+    environment:
+      # User and Group ID for file creation inside /models (defaults to 0:0 for host volume compatibility)
+      - PUID=0
+      - PGID=0
+      # Hugging Face repository and model filename
+      - MODEL_REPO=lmstudio-community/Qwen3.8-27B-GGUF
+      - MODEL_FILE=Qwen3.8-27B-Q4_K_M.gguf
+      - MODEL_DIR=/models
+      # Hugging Face download cache directory
+      - HF_HOME=/models/.cache/huggingface
+      # Server network binding
+      - HOST=0.0.0.0
+      - PORT=18080
+      # Inference parameters
+      - CTX=100000
+      - DRAFT=4
+      - KV=auto
+      # Check / re-download model if updated on startup (1 = enabled, 0 = disable check if file exists)
+      - UPDATE_MODEL=1
+      # Optional: Hugging Face API token for gated repositories or higher rate limits
+      # - HF_TOKEN=
+      # Optional: Additional CLI arguments passed to openjet-engine (e.g. --parallel 4, --no-shared-prefix)
+      # - EXTRA_ARGS=
+    volumes:
+      # Directory where the GGUF model and Hugging Face cache are stored
+      - ./models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

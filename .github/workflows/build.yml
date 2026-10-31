@@ -1,0 +1,262 @@
+name: Build and Push Megakernel Container
+
+on:
+  workflow_dispatch:
+    inputs:
+      openjet_ref:
+        description: 'OpenJet commit SHA or ref (leave blank to read from docker/versions.json)'
+        required: false
+        default: ''
+      llama_cpp_ref:
+        description: 'llama.cpp release tag or ref (leave blank to read from docker/versions.json)'
+        required: false
+        default: ''
+  workflow_call:
+    inputs:
+      openjet_ref:
+        type: string
+        required: false
+        default: ''
+      llama_cpp_ref:
+        type: string
+        required: false
+        default: ''
+  push:
+    branches:
+      - master
+    paths:
+      - 'docker/**'
+      - '.github/workflows/build.yml'
+
+permissions:
+  contents: write
+  packages: write
+  issues: write
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve Build References and Tags
+        id: vars
+        run: |
+          # 1. Resolve openjet commit
+          INPUT_OPENJET="${{ inputs.openjet_ref }}"
+          if [ -n "$INPUT_OPENJET" ]; then
+            OPENJET_COMMIT="$INPUT_OPENJET"
+          else
+            OPENJET_COMMIT=$(python3 -c "import json; print(json.load(open('docker/versions.json')).get('openjet_commit', '').strip())" 2>/dev/null || echo "${{ github.sha }}")
+          fi
+          if [ -z "$OPENJET_COMMIT" ]; then
+            OPENJET_COMMIT="${{ github.sha }}"
+          fi
+          OPENJET_SHA7=$(echo "$OPENJET_COMMIT" | cut -c1-7)
+
+          # 2. Resolve llama.cpp ref
+          INPUT_LLAMA="${{ inputs.llama_cpp_ref }}"
+          if [ -n "$INPUT_LLAMA" ]; then
+            LLAMA_REF="$INPUT_LLAMA"
+          else
+            LLAMA_REF=$(python3 -c "import json; print(json.load(open('docker/versions.json')).get('llama_cpp_ref', '').strip())" 2>/dev/null || echo "b10246")
+          fi
+          if [ -z "$LLAMA_REF" ]; then
+            LLAMA_REF="b10246"
+          fi
+
+          IMAGE_REPO="ghcr.io/websterwh/openjet-engine"
+          VERSION_TAG="${IMAGE_REPO}:sha-${OPENJET_SHA7}-${LLAMA_REF}"
+          LATEST_TAG="${IMAGE_REPO}:latest"
+          PREVIOUS_TAG="${IMAGE_REPO}:previous"
+
+          echo "openjet_commit=$OPENJET_COMMIT" >> $GITHUB_OUTPUT
+          echo "openjet_sha7=$OPENJET_SHA7" >> $GITHUB_OUTPUT
+          echo "llama_ref=$LLAMA_REF" >> $GITHUB_OUTPUT
+          echo "image_repo=$IMAGE_REPO" >> $GITHUB_OUTPUT
+          echo "version_tag=$VERSION_TAG" >> $GITHUB_OUTPUT
+          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+
+          echo "Resolved build references:"
+          echo "  OpenJet Commit: $OPENJET_COMMIT ($OPENJET_SHA7)"
+          echo "  llama.cpp Ref:  $LLAMA_REF"
+          echo "  Image Repo:     $IMAGE_REPO"
+          echo "  Version Tag:    $VERSION_TAG"
+          echo "  Latest Tag:     $LATEST_TAG"
+
+      - name: Fetch megakernel from upstream open-jet (sparse checkout)
+        uses: actions/checkout@v4
+        with:
+          repository: L-Forster/open-jet
+          ref: ${{ steps.vars.outputs.openjet_commit }}
+          sparse-checkout: megakernel
+          sparse-checkout-cone-mode: false
+          path: upstream-checkout
+
+      - name: Prepare Docker Build Context
+        run: |
+          echo "Placing megakernel/ into build context..."
+          cp -r upstream-checkout/megakernel ./megakernel
+          rm -rf upstream-checkout
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Versioned Image (linux/amd64 only)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            OPENJET_COMMIT=${{ steps.vars.outputs.openjet_commit }}
+            LLAMA_CPP_REF=${{ steps.vars.outputs.llama_ref }}
+          push: true
+          tags: ${{ steps.vars.outputs.version_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Smoke tests require NO GPU (CPU-only verification)
+      - name: Run CPU Smoke Tests
+        env:
+          VERSION_TAG: ${{ steps.vars.outputs.version_tag }}
+        run: |
+          echo "Pulling versioned image for smoke verification: $VERSION_TAG"
+          docker pull "$VERSION_TAG"
+
+          echo "=========================================================="
+          echo " Smoke Test 1: openjet-engine --help"
+          echo "=========================================================="
+          docker run --rm --entrypoint openjet-engine "$VERSION_TAG" --help
+
+          echo "=========================================================="
+          echo " Smoke Test 2: Verify ldd dynamic link resolution"
+          echo "=========================================================="
+          docker run --rm --entrypoint bash "$VERSION_TAG" -c '
+            set -euo pipefail
+            for arch in sm_86 sm_89 sm_120; do
+              lib="/opt/open-jet/libs/libqwen38mk_${arch}.so"
+              echo "Checking $lib..."
+              if [ ! -f "$lib" ]; then
+                echo "ERROR: Missing $lib" >&2
+                exit 1
+              fi
+              if ldd "$lib" | grep "not found"; then
+                echo "ERROR: Unresolved dynamic link dependencies in $lib" >&2
+                exit 1
+              fi
+            done
+            echo "SUCCESS: All megakernel libraries resolved dynamic links cleanly."
+          '
+
+          echo "=========================================================="
+          echo " Smoke Test 3: Verify llama.cpp libraries load via ctypes"
+          echo "=========================================================="
+          docker run --rm --entrypoint python3 "$VERSION_TAG" -c '
+          import ctypes
+          import os
+
+          llama_path = "/opt/open-jet/llama.cpp/build/bin/libllama.so"
+          if not os.path.exists(llama_path):
+              raise FileNotFoundError(f"Missing {llama_path}")
+
+          lib = ctypes.CDLL(llama_path)
+          assert lib is not None
+          print("SUCCESS: libllama.so loaded via ctypes successfully.")
+          '
+
+          echo "=========================================================="
+          echo " Smoke Test 4: Verify server module imports cleanly"
+          echo "=========================================================="
+          docker run --rm --entrypoint python3 "$VERSION_TAG" -c '
+          import megakernel.server.mk_server as srv
+          assert hasattr(srv, "main"), "mk_server missing main()"
+          assert hasattr(srv, "Server"), "mk_server missing Server class"
+          print("SUCCESS: megakernel.server.mk_server imported successfully.")
+          '
+
+      - name: Retag previous and promote latest Tag
+        env:
+          IMAGE_REPO: ${{ steps.vars.outputs.image_repo }}
+          VERSION_TAG: ${{ steps.vars.outputs.version_tag }}
+          LATEST_TAG: ${{ steps.vars.outputs.latest_tag }}
+          PREVIOUS_TAG: ${{ steps.vars.outputs.previous_tag }}
+        run: |
+          echo "Smoke tests passed. Retagging old latest as previous if it exists..."
+          if docker pull "$LATEST_TAG"; then
+            echo "Retagging current latest to $PREVIOUS_TAG..."
+            docker tag "$LATEST_TAG" "$PREVIOUS_TAG"
+            docker push "$PREVIOUS_TAG"
+            echo "Successfully updated $PREVIOUS_TAG."
+          else
+            echo "No existing latest tag found to retag."
+          fi
+
+          echo "Promoting versioned image: Tagging $VERSION_TAG as $LATEST_TAG..."
+          docker tag "$VERSION_TAG" "$LATEST_TAG"
+          docker push "$LATEST_TAG"
+          echo "Successfully promoted and pushed $LATEST_TAG."
+
+      - name: Job Summary on Success
+        run: |
+          echo "## :white_check_mark: Build and CPU Smoke Tests Succeeded" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Image** | \`${{ steps.vars.outputs.image_repo }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Version Tag** | \`${{ steps.vars.outputs.version_tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Latest Tag** | \`${{ steps.vars.outputs.latest_tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Previous Tag** | \`${{ steps.vars.outputs.previous_tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **OpenJet Commit** | \`${{ steps.vars.outputs.openjet_commit }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **llama.cpp Ref** | \`${{ steps.vars.outputs.llama_ref }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Smoke Tests Passed" >> $GITHUB_STEP_SUMMARY
+          echo "- :heavy_check_mark: \`openjet-engine --help\` ran successfully" >> $GITHUB_STEP_SUMMARY
+          echo "- :heavy_check_mark: \`ldd\` confirmed all dynamic link dependencies resolve for \`sm_86\`, \`sm_89\`, and \`sm_120\`" >> $GITHUB_STEP_SUMMARY
+          echo "- :heavy_check_mark: \`libllama.so\` loaded into Python via \`ctypes\`" >> $GITHUB_STEP_SUMMARY
+          echo "- :heavy_check_mark: \`megakernel.server.mk_server\` imported successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> **Note:** CI tests are CPU-only smoke tests that cross-compile without a physical GPU. Real GPU inference verification is performed on hardware with an NVIDIA GeForce RTX 3090." >> $GITHUB_STEP_SUMMARY
+
+      # Failure handling: open or update GitHub issue, and do NOT move latest
+      - name: Report Build or Test Failure via GitHub Issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENJET_COMMIT: ${{ steps.vars.outputs.openjet_commit }}
+          LLAMA_REF: ${{ steps.vars.outputs.llama_ref }}
+          VERSION_TAG: ${{ steps.vars.outputs.version_tag }}
+        run: |
+          echo "Build or smoke tests failed! Checking for existing failure issue..."
+          ISSUE_TITLE="Automated build failure for openjet-engine"
+          EXISTING_ISSUE=$(gh issue list --search "$ISSUE_TITLE in:title" --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
+
+          ISSUE_BODY="Build or smoke test failure occurred on workflow run [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+
+          - **OpenJet Commit:** \`${OPENJET_COMMIT}\`
+          - **llama.cpp Ref:** \`${LLAMA_REF}\`
+          - **Target Version Tag:** \`${VERSION_TAG}\`
+
+          The \`latest\` tag was not updated."
+
+          if [ -n "$EXISTING_ISSUE" ]; then
+            echo "Updating existing issue #$EXISTING_ISSUE..."
+            gh issue comment "$EXISTING_ISSUE" --body "$ISSUE_BODY"
+          else
+            echo "Creating new issue..."
+            gh issue create \
+              --title "$ISSUE_TITLE" \
+              --body "$ISSUE_BODY" \
+              --label "bug" || true
+          fi

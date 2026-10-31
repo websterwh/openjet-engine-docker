@@ -1,0 +1,12 @@
+# Exclude everything by default
+**
+
+# Include only megakernel directory (fetched at build time) and docker/ files
+!megakernel
+!megakernel/**
+!docker
+!docker/**
+
+# Include licenses for packaging into /licenses
+!LICENSE
+!SOURCE.md

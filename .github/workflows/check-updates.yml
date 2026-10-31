@@ -1,0 +1,158 @@
+name: Check Upstream Updates
+
+on:
+  schedule:
+    # Run daily at 03:00 UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+  issues: write
+
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.compare.outputs.changed }}
+      openjet_commit: ${{ steps.compare.outputs.openjet_commit }}
+      llama_ref: ${{ steps.compare.outputs.llama_ref }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Query upstream references and compare versions
+        id: compare
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 1. Query latest upstream commit touching megakernel/ via GitHub API
+          LATEST_OPENJET=$(gh api "repos/L-Forster/open-jet/commits?path=megakernel&per_page=1" --jq '.[0].sha')
+          if [ -z "$LATEST_OPENJET" ]; then
+            echo "ERROR: Failed to resolve latest upstream OpenJet commit." >&2
+            exit 1
+          fi
+
+          # 2. Query latest ggml-org/llama.cpp release tag via GitHub API
+          LATEST_LLAMA=$(gh api "repos/ggml-org/llama.cpp/releases?per_page=1" --jq '.[0].tag_name')
+          if [ -z "$LATEST_LLAMA" ]; then
+            echo "ERROR: Failed to resolve latest llama.cpp release tag." >&2
+            exit 1
+          fi
+
+          echo "Latest upstream open-jet commit: $LATEST_OPENJET"
+          echo "Latest llama.cpp release tag:    $LATEST_LLAMA"
+
+          # 3. Read current versions and evaluate changes in Python
+          python3 -c '
+          import json, os, datetime
+
+          versions_file = "docker/versions.json"
+          if os.path.exists(versions_file):
+              with open(versions_file) as f:
+                  data = json.load(f)
+          else:
+              data = {}
+
+          curr_openjet = data.get("openjet_commit", "").strip()
+          curr_llama = data.get("llama_cpp_ref", "").strip()
+          curr_updated = data.get("llama_cpp_updated_at", "").strip()
+
+          latest_openjet = "'"$LATEST_OPENJET"'".strip()
+          latest_llama = "'"$LATEST_LLAMA"'".strip()
+
+          now = datetime.datetime.now(datetime.timezone.utc)
+          openjet_changed = (curr_openjet != latest_openjet)
+          llama_different = (curr_llama != latest_llama)
+
+          # Calculate days since last llama.cpp update
+          if curr_updated:
+              try:
+                  dt = datetime.datetime.fromisoformat(curr_updated.replace("Z", "+00:00"))
+                  days = (now - dt).total_seconds() / 86400.0
+              except Exception:
+                  days = 999.0
+          else:
+              days = 999.0
+
+          # Rule: Bump llama.cpp at most once per 7 days unless OpenJet SHA changed
+          allow_llama_bump = openjet_changed or (days >= 7.0)
+          llama_changed = llama_different and allow_llama_bump
+
+          should_update = openjet_changed or llama_changed
+          final_llama = latest_llama if llama_changed else curr_llama
+          final_updated = now.isoformat() if llama_changed else curr_updated
+
+          print(f"Current: openjet={curr_openjet}, llama={curr_llama}, updated_at={curr_updated}")
+          print(f"Latest:  openjet={latest_openjet}, llama={latest_llama}")
+          print(f"Days since llama update: {days:.2f}. Allow bump: {allow_llama_bump}")
+          print(f"Result:  openjet_changed={openjet_changed}, llama_changed={llama_changed}, should_update={should_update}")
+
+          github_output = os.environ.get("GITHUB_OUTPUT")
+          if github_output:
+              with open(github_output, "a") as f:
+                  f.write(f"changed={'true' if should_update else 'false'}\n")
+                  f.write(f"openjet_commit={latest_openjet}\n")
+                  f.write(f"llama_ref={final_llama}\n")
+                  f.write(f"new_updated_at={final_updated}\n")
+          '
+
+      - name: Update versions.json and push commit
+        if: steps.compare.outputs.changed == 'true'
+        env:
+          NEW_OPENJET: ${{ steps.compare.outputs.openjet_commit }}
+          NEW_LLAMA: ${{ steps.compare.outputs.llama_ref }}
+          NEW_UPDATED: ${{ steps.compare.outputs.new_updated_at }}
+        run: |
+          echo "Writing updated docker/versions.json..."
+          python3 -c '
+          import json
+          with open("docker/versions.json", "w") as f:
+              json.dump({
+                  "openjet_commit": "'"$NEW_OPENJET"'",
+                  "llama_cpp_ref": "'"$NEW_LLAMA"'",
+                  "llama_cpp_updated_at": "'"$NEW_UPDATED"'"
+              }, f, indent=2)
+              f.write("\n")
+          '
+
+          git add docker/versions.json
+          COMMIT_MSG="chore(versions): update openjet to ${NEW_OPENJET:0:7}, llama.cpp to ${NEW_LLAMA}"
+          git commit -m "$COMMIT_MSG"
+          git push origin master
+          echo "Pushed updated versions.json to origin/master."
+
+      - name: Monthly Keepalive Commit
+        if: steps.compare.outputs.changed == 'false'
+        run: |
+          # Ensure GitHub does not disable scheduled workflows after 60 days of inactivity
+          LAST_COMMIT_TS=$(git log -1 --format=%ct)
+          NOW_TS=$(date +%s)
+          DAYS_SINCE=$(( (NOW_TS - LAST_COMMIT_TS) / 86400 ))
+          DAY_OF_MONTH=$(date +%d)
+
+          if [ "$DAYS_SINCE" -ge 30 ] || [ "$DAY_OF_MONTH" = "01" ]; then
+            echo "Performing monthly keepalive commit (days since last commit: $DAYS_SINCE)..."
+            git commit --allow-empty -m "chore(keepalive): monthly workflow keepalive commit [skip ci]"
+            git push origin master
+            echo "Keepalive commit pushed."
+          else
+            echo "Repository has recent commits ($DAYS_SINCE days ago). No keepalive commit needed."
+          fi
+
+  trigger-build-job:
+    needs: check-and-update
+    if: needs.check-and-update.outputs.changed == 'true'
+    uses: ./.github/workflows/build.yml
+    with:
+      openjet_ref: ${{ needs.check-and-update.outputs.openjet_commit }}
+      llama_cpp_ref: ${{ needs.check-and-update.outputs.llama_ref }}
