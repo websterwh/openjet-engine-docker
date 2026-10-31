@@ -35,6 +35,9 @@ By design, this engine image contains **NO** fallback to `llama-server`. If the 
 | **NVIDIA Ampere (RTX 3090, RTX 3080 24GB)** | `8.6` | `libqwen38mk_sm86.so` | **Verified & Tuned** | **24 GB+** (≥23 GB detected) |
 | **NVIDIA Ada Lovelace (RTX 4090, RTX 4080)** | `8.9` | `libqwen38mk_sm89.so` | Compiled, Untested | **24 GB+** (≥23 GB detected) |
 | **NVIDIA Blackwell (RTX 5090)** | `12.0` | `libqwen38mk_sm120.so` | Compiled, Untested | **24 GB+** (≥23 GB detected) |
+### Hardware Verification Status
+- **RTX 3090 (`sm_86`):** Verified on physical hardware. The container has started and served inference requests successfully.
+- **RTX 4090 (`sm_89`) & RTX 5090 (`sm_120`):** Cross-compiled and validated for dynamic library linkage via CI smoke tests, but untested on physical hardware.
 
 ### Strict Hardware Constraints:
 - **VRAM**: Requires at least **24 GB VRAM** (the startup script verifies that `nvidia-smi` detects at least 23,000 MiB). Any GPU with less than 23 GB VRAM fails immediately at startup.
@@ -131,9 +134,15 @@ The automated maintenance pipeline keeps this container up to date with upstream
 ### 7. CUDA Out-of-Memory During Startup Warm-up
 - **Cause**: The requested context size (`CTX`) combined with the KV cache mode exceeds available VRAM.
 - **Resolution**: Set `KV=q8` or reduce `CTX` (e.g., from `100000` to `65536` or `32768`).
+### 8. Multi-GPU Host Configuration
+- **Behavior**: On a machine with more than one NVIDIA GPU, the container must be given only the supported GPU, because the entrypoint only checks the first GPU that `nvidia-smi` lists.
+- **Resolution**: Expose only the single supported 24 GB+ GPU to the container (e.g. using `device_ids: ['0']` under Compose reservations, or `NVIDIA_VISIBLE_DEVICES=0`).
+
+### 9. Harmless Startup Notice: `driverInitFileInfo ... result=11`
+- **Behavior**: At container startup, the log shows `ERROR: driverInitFileInfo 599 result=11 ERROR: init 685 result=11 ERROR: init 250 result=11` before the model loads.
+- **Resolution**: Harmless. Emitted by the host NVIDIA driver's `libnvidia-sandboxutils.so` when optional container sandbox configuration files are not present; the driver falls back cleanly to direct access and CUDA initializes normally.
 
 ---
-
 ## AGPL-3.0 License & Credits
 
 This container distribution is licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0).
