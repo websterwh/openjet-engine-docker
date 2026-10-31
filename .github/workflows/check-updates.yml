@@ -63,6 +63,7 @@ jobs:
           echo "  Latest llama.cpp Edge:  $LATEST_EDGE"
 
           # 4. Read current versions from docker/versions.json and evaluate changes in Python
+          export LATEST_OPENJET PINNED_LLAMA LATEST_EDGE
           python3 -c '
           import json, os, datetime
 
@@ -78,9 +79,9 @@ jobs:
           curr_llama_edge = data.get("llama_cpp_edge", "").strip()
           curr_edge_updated = data.get("llama_cpp_edge_updated_at", "").strip()
 
-          latest_openjet = "'"$LATEST_OPENJET"'".strip()
-          pinned_llama = "'"$PINNED_LLAMA"'".strip()
-          latest_edge = "'"$LATEST_EDGE"'".strip()
+          latest_openjet = os.environ["LATEST_OPENJET"].strip()
+          pinned_llama = os.environ["PINNED_LLAMA"].strip()
+          latest_edge = os.environ["LATEST_EDGE"].strip()
 
           now = datetime.datetime.now(datetime.timezone.utc)
           openjet_changed = (curr_openjet != latest_openjet)
@@ -104,6 +105,7 @@ jobs:
           should_update = openjet_changed or pinned_llama_changed or edge_changed
           final_edge = latest_edge if edge_changed else curr_llama_edge
           final_edge_updated = now.isoformat() if edge_changed else curr_edge_updated
+          val_changed = "true" if should_update else "false"
 
           print(f"Current: openjet={curr_openjet}, pinned_llama={curr_llama_pinned}, edge={curr_llama_edge}, edge_updated={curr_edge_updated}")
           print(f"Latest:  openjet={latest_openjet}, pinned_llama={pinned_llama}, edge={latest_edge}")
@@ -113,7 +115,7 @@ jobs:
           github_output = os.environ.get("GITHUB_OUTPUT")
           if github_output:
               with open(github_output, "a") as f:
-                  f.write(f"changed={'true' if should_update else 'false'}\n")
+                  f.write(f"changed={val_changed}\n")
                   f.write(f"openjet_commit={latest_openjet}\n")
                   f.write(f"llama_ref={pinned_llama}\n")
                   f.write(f"llama_edge={final_edge}\n")
@@ -130,13 +132,13 @@ jobs:
         run: |
           echo "Writing updated docker/versions.json..."
           python3 -c '
-          import json
+          import json, os
           with open("docker/versions.json", "w") as f:
               json.dump({
-                  "openjet_commit": "'"$NEW_OPENJET"'",
-                  "llama_cpp_ref": "'"$NEW_LLAMA_PINNED"'",
-                  "llama_cpp_edge": "'"$NEW_LLAMA_EDGE"'",
-                  "llama_cpp_edge_updated_at": "'"$NEW_EDGE_UPDATED"'"
+                  "openjet_commit": os.environ["NEW_OPENJET"],
+                  "llama_cpp_ref": os.environ["NEW_LLAMA_PINNED"],
+                  "llama_cpp_edge": os.environ["NEW_LLAMA_EDGE"],
+                  "llama_cpp_edge_updated_at": os.environ["NEW_EDGE_UPDATED"]
               }, f, indent=2)
               f.write("\n")
           '
