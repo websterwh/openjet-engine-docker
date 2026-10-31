@@ -32,9 +32,10 @@ on:
   push:
     branches:
       - master
-    paths:
-      - 'docker/**'
-      - '.github/workflows/build.yml'
+    paths-ignore:
+      - '**.md'
+      - 'SOURCE.md'
+      - 'docker-compose.example.yml'
 
 permissions:
   contents: write
