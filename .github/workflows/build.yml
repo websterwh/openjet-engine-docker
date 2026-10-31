@@ -73,6 +73,7 @@ jobs:
           fi
 
           docker run --rm \
+            -v "$GITHUB_WORKSPACE/docker/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro" \
             -v "$GITHUB_WORKSPACE/docker/entrypoint.sh:/entrypoint.sh:ro" \
             -v "$GITHUB_WORKSPACE/docker/test_entrypoint.sh:/test_entrypoint.sh:ro" \
             --entrypoint bash \
