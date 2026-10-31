@@ -81,16 +81,10 @@ jobs:
             touch /opt/open-jet/libs/libqwen38mk_sm86.so
             touch /opt/open-jet/megakernel/draft_vocab_32k.bin
 
-            cat << "EOF" > /tmp/stubs/nvidia-smi
-#!/bin/sh
-echo "8.6, 24576"
-EOF
+            printf '#!/bin/sh\necho "8.6, 24576"\n' > /tmp/stubs/nvidia-smi
             chmod +x /tmp/stubs/nvidia-smi
 
-            cat << "EOF" > /tmp/stubs/openjet-engine
-#!/bin/sh
-echo "STUB_OUTPUT: uid=\$(id -u) gid=\$(id -g) args: \$*"
-EOF
+            printf '#!/bin/sh\necho "STUB_OUTPUT: uid=\$(id -u) gid=\$(id -g) args: \$*"\n' > /tmp/stubs/openjet-engine
             chmod +x /tmp/stubs/openjet-engine
 
             touch /tmp/test_models/test_model.gguf
@@ -328,16 +322,10 @@ EOF
             set -euo pipefail
 
             mkdir -p /tmp/stubs /tmp/test_models
-            cat << "EOF" > /tmp/stubs/nvidia-smi
-#!/bin/sh
-echo "8.6, 24576"
-EOF
+            printf '#!/bin/sh\necho "8.6, 24576"\n' > /tmp/stubs/nvidia-smi
             chmod +x /tmp/stubs/nvidia-smi
 
-            cat << "EOF" > /tmp/stubs/openjet-engine
-#!/bin/sh
-echo "STUB_OUTPUT: uid=$(id -u) gid=$(id -g) args: $*"
-EOF
+            printf '#!/bin/sh\necho "STUB_OUTPUT: uid=$(id -u) gid=$(id -g) args: $*"\n' > /tmp/stubs/openjet-engine
             chmod +x /tmp/stubs/openjet-engine
 
             touch /tmp/test_models/test_model.gguf
