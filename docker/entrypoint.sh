@@ -39,8 +39,11 @@ if [ -z "${PARALLEL:-}" ] && [ -z "${AGENTS:-}" ]; then
     PARALLEL=1
 fi
 
+PARALLEL="${PARALLEL:-}"
+AGENTS="${AGENTS:-}"
+
 # Context default: keep CTX=100000 as default when PARALLEL=1
-if [ "${PARALLEL:-}" = "1" ]; then
+if [ "${PARALLEL}" = "1" ]; then
     CTX="${CTX:-100000}"
 else
     CTX="${CTX:-}"
@@ -119,8 +122,24 @@ echo "Selected engine library: ${LIB_PATH} (target: ${ARCH})"
 mkdir -p "$MODEL_DIR" "$HF_HOME"
 
 if [ "$(id -u)" -eq 0 ] && { [ "$PUID" -ne 0 ] || [ "$PGID" -ne 0 ]; }; then
+    for grp in video render; do
+        if ! getent group "$grp" >/dev/null 2>&1; then
+            groupadd -r "$grp" 2>/dev/null || true
+        fi
+    done
     groupadd -g "$PGID" -o openjet 2>/dev/null || true
-    useradd -u "$PUID" -g "$PGID" -o -G video,render -d /home/openjet -m -s /bin/bash openjet 2>/dev/null || true
+    EXISTING_GROUPS=""
+    for grp in video render; do
+        if getent group "$grp" >/dev/null 2>&1; then
+            EXISTING_GROUPS="${EXISTING_GROUPS:+$EXISTING_GROUPS,}$grp"
+        fi
+    done
+    USERADD_ARGS=(-u "$PUID" -g "$PGID" -o -d /home/openjet -m -s /bin/bash)
+    if [ -n "$EXISTING_GROUPS" ]; then
+        USERADD_ARGS+=(-G "$EXISTING_GROUPS")
+    fi
+    useradd "${USERADD_ARGS[@]}" openjet 2>/dev/null || true
+    mkdir -p /home/openjet
     chown -R "${PUID}:${PGID}" "$MODEL_DIR" /home/openjet 2>/dev/null || true
 fi
 
