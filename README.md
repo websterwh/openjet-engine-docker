@@ -33,7 +33,7 @@ This repository isolates and automates container builds for the high-performance
 | `latest` | The current stable build using the upstream-pinned `llama.cpp` reference (`LLAMA_CPP_MTP_REF` in `src/provisioning.py`). Updated only after passing all smoke tests. |
 | `previous` | The previous stable `latest` image, retained before moving `latest` so you can quickly roll back if needed. |
 | `edge` | An experimental build using the newest release tag from `ggml-org/llama.cpp` (checked and bumped at most once weekly), validated against the same smoke tests. `latest` is never moved by an `edge` build. |
-| `sha-<openjet7>-<llama ref>` | Immutable versioned tags specifying the exact 7-character OpenJet commit SHA and the exact `llama.cpp` reference (e.g. `sha-ad5e66e-b10246` or `sha-ad5e66e-b12017`). Every build produces an immutable tag of this format. |
+| `sha-<openjet7>-<llama ref>-<repo7>` | Immutable versioned tags specifying the 7-character OpenJet commit SHA, the `llama.cpp` reference, and this repository's 7-character commit SHA (e.g. `sha-9b28b81-b10246-0c2da59`). Existing immutable tags are checked before push and never overwritten. |
 
 ---
 

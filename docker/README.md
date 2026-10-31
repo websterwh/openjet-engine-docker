@@ -24,7 +24,7 @@ By design, this engine image contains **NO** fallback to `llama-server`. If the 
 | `latest` | The current stable build using the upstream-pinned `llama.cpp` reference (`LLAMA_CPP_MTP_REF` in `src/provisioning.py`). Updated only after passing all smoke tests. |
 | `previous` | The previous stable `latest` image, retained before moving `latest` so you can quickly roll back if needed. |
 | `edge` | An experimental build using the newest release tag from `ggml-org/llama.cpp` (checked and bumped at most once weekly), validated against the same smoke tests. `latest` is never moved by an `edge` build. |
-| `sha-<openjet7>-<llama ref>` | Immutable versioned tags specifying the exact 7-character OpenJet commit SHA and the exact `llama.cpp` reference (e.g. `sha-ad5e66e-b10246` or `sha-ad5e66e-b12017`). Every build produces an immutable tag of this format. |
+| `sha-<openjet7>-<llama ref>-<repo7>` | Immutable versioned tags specifying the 7-character OpenJet commit SHA, the `llama.cpp` reference, and this repository's 7-character commit SHA (e.g. `sha-9b28b81-b10246-0c2da59`). Existing immutable tags are checked before push and never overwritten. |
 
 ---
 
@@ -92,13 +92,13 @@ The automated maintenance pipeline keeps this container up to date with upstream
    - At build time, checks out only `megakernel/` from `L-Forster/open-jet` at the pinned commit.
    - Builds for `linux/amd64` using `docker/build-push-action@v6` with layer caching.
    - Cross-compiles for `sm_86`, `sm_89`, and `sm_120`.
-   - Tags the stable image with `sha-<openjet7>-<llama_cpp_ref>`.
+   - Tags the stable image with `sha-<openjet7>-<llama_cpp_ref>-<repo7>`.
    - Runs CPU-only smoke tests:
      - `openjet-engine --help` runs successfully.
      - `ldd` verifies all dynamic dependencies resolve for all three architecture libraries.
      - `libllama.so` loads successfully via Python `ctypes` and `megakernel.server.mk_server` imports cleanly.
    - **Promotion**: After smoke tests pass, retags the existing `latest` image as `previous`, then moves `latest` to the new stable image.
-   - **Edge Build**: If an edge ref is present, builds and tests the edge image, tagging as `sha-<openjet7>-<edge>` and promoting to `edge`. The `latest` tag is untouched by edge.
+   - **Edge Build**: If an edge ref is present, builds and tests the edge image, tagging as `sha-<openjet7>-<edge>-<repo7>` and promoting to `edge`. The `latest` tag is untouched by edge. Existing immutable tags are checked before push and never overwritten.
    - **Failure Handling**: If any build or smoke test fails, opens or updates a GitHub issue documenting the failure and leaves `latest` untouched.
 
 ---

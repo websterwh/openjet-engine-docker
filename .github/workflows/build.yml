@@ -121,25 +121,26 @@ jobs:
           else
             LLAMA_EDGE=$(python3 -c "import json; print(json.load(open('docker/versions.json')).get('llama_cpp_edge', '').strip())" 2>/dev/null || echo "")
           fi
+          # 4. Resolve repository commit SHA (7 chars)
+          REPO_SHA7=$(git rev-parse --short=7 HEAD 2>/dev/null || echo "${{ github.sha }}" | cut -c1-7)
 
           IMAGE_REPO="ghcr.io/websterwh/openjet-engine"
-          VERSION_TAG="${IMAGE_REPO}:sha-${OPENJET_SHA7}-${LLAMA_REF}"
+          VERSION_TAG="${IMAGE_REPO}:sha-${OPENJET_SHA7}-${LLAMA_REF}-${REPO_SHA7}"
           LATEST_TAG="${IMAGE_REPO}:latest"
           PREVIOUS_TAG="${IMAGE_REPO}:previous"
           EDGE_TAG="${IMAGE_REPO}:edge"
-          EDGE_VERSION_TAG="${IMAGE_REPO}:sha-${OPENJET_SHA7}-${LLAMA_EDGE}"
-
+          EDGE_VERSION_TAG="${IMAGE_REPO}:sha-${OPENJET_SHA7}-${LLAMA_EDGE}-${REPO_SHA7}"
           echo "openjet_commit=$OPENJET_COMMIT" >> $GITHUB_OUTPUT
           echo "openjet_sha7=$OPENJET_SHA7" >> $GITHUB_OUTPUT
           echo "llama_ref=$LLAMA_REF" >> $GITHUB_OUTPUT
           echo "llama_edge=$LLAMA_EDGE" >> $GITHUB_OUTPUT
           echo "image_repo=$IMAGE_REPO" >> $GITHUB_OUTPUT
+          echo "repo_sha7=$REPO_SHA7" >> $GITHUB_OUTPUT
           echo "version_tag=$VERSION_TAG" >> $GITHUB_OUTPUT
           echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
           echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
           echo "edge_tag=$EDGE_TAG" >> $GITHUB_OUTPUT
           echo "edge_version_tag=$EDGE_VERSION_TAG" >> $GITHUB_OUTPUT
-
           echo "Resolved build references:"
           echo "  OpenJet Commit:    $OPENJET_COMMIT ($OPENJET_SHA7)"
           echo "  Pinned llama.cpp:  $LLAMA_REF"
@@ -177,7 +178,7 @@ jobs:
       # ========================================================================
       # Part 1: Stable Build (Pinned LLAMA_CPP_REF) -> latest, previous, sha-...
       # ========================================================================
-      - name: Build and Push Pinned Stable Image (linux/amd64 only)
+      - name: Build Pinned Stable Image (linux/amd64 only)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -186,7 +187,7 @@ jobs:
           build-args: |
             OPENJET_COMMIT=${{ steps.vars.outputs.openjet_commit }}
             LLAMA_CPP_REF=${{ steps.vars.outputs.llama_ref }}
-          push: true
+          load: true
           tags: ${{ steps.vars.outputs.version_tag }}
           cache-from: type=gha,scope=pinned
           cache-to: type=gha,mode=max,scope=pinned
@@ -195,9 +196,7 @@ jobs:
         env:
           VERSION_TAG: ${{ steps.vars.outputs.version_tag }}
         run: |
-          echo "Pulling pinned image for smoke verification: $VERSION_TAG"
-          docker pull "$VERSION_TAG"
-
+          echo "Running smoke verification on locally built image: $VERSION_TAG"
           echo "=========================================================="
           echo " Smoke Test 1: openjet-engine --help"
           echo "=========================================================="
@@ -255,6 +254,15 @@ jobs:
           LATEST_TAG: ${{ steps.vars.outputs.latest_tag }}
           PREVIOUS_TAG: ${{ steps.vars.outputs.previous_tag }}
         run: |
+          echo "Checking if immutable tag $VERSION_TAG already exists in registry..."
+          if docker buildx imagetools inspect "$VERSION_TAG" >/dev/null 2>&1; then
+            echo "Immutable tag $VERSION_TAG already exists in registry. Skipping push to avoid overwriting."
+          else
+            echo "Pushing immutable tag $VERSION_TAG..."
+            docker push "$VERSION_TAG"
+            echo "Successfully pushed $VERSION_TAG."
+          fi
+
           echo "Pinned smoke tests passed. Retagging current latest as previous..."
           if docker pull "$LATEST_TAG"; then
             echo "Retagging current latest to $PREVIOUS_TAG..."
@@ -269,7 +277,6 @@ jobs:
           docker tag "$VERSION_TAG" "$LATEST_TAG"
           docker push "$LATEST_TAG"
           echo "Successfully promoted and pushed $LATEST_TAG."
-
       # ========================================================================
       # Part 2: Edge Build (Newest llama.cpp Release) -> edge, sha-<openjet7>-<edge>
       # ========================================================================
@@ -289,11 +296,8 @@ jobs:
             --file docker/Dockerfile \
             --tag "$EDGE_VERSION_TAG" \
             --tag "$EDGE_TAG" \
-            --push \
+            --load \
             .
-
-          echo "Pulling edge image for smoke verification: $EDGE_TAG"
-          docker pull "$EDGE_TAG"
 
           echo "Running smoke tests on Edge image..."
           docker run --rm --entrypoint openjet-engine "$EDGE_TAG" --help
@@ -313,8 +317,19 @@ jobs:
           assert lib is not None and hasattr(srv, "main")
           print("SUCCESS: Edge smoke tests passed.")
           '
-          echo "SUCCESS: Edge build verified and pushed ($EDGE_TAG and $EDGE_VERSION_TAG)."
 
+          echo "Checking if immutable edge tag $EDGE_VERSION_TAG already exists in registry..."
+          if docker buildx imagetools inspect "$EDGE_VERSION_TAG" >/dev/null 2>&1; then
+            echo "Immutable edge tag $EDGE_VERSION_TAG already exists in registry. Skipping push to avoid overwriting."
+          else
+            echo "Pushing immutable edge tag $EDGE_VERSION_TAG..."
+            docker push "$EDGE_VERSION_TAG"
+            echo "Successfully pushed $EDGE_VERSION_TAG."
+          fi
+
+          echo "Promoting edge tag $EDGE_TAG..."
+          docker push "$EDGE_TAG"
+          echo "SUCCESS: Edge build verified and pushed ($EDGE_TAG)."
       - name: Job Summary on Success
         run: |
           echo "## :white_check_mark: Build and CPU Smoke Tests Succeeded" >> $GITHUB_STEP_SUMMARY
