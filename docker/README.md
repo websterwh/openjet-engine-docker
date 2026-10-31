@@ -134,14 +134,6 @@ The automated maintenance pipeline keeps this container up to date with upstream
 ### 7. CUDA Out-of-Memory During Startup Warm-up
 - **Cause**: The requested context size (`CTX`) combined with the KV cache mode exceeds available VRAM.
 - **Resolution**: Set `KV=q8` or reduce `CTX` (e.g., from `100000` to `65536` or `32768`).
-### 8. Multi-GPU Host Configuration
-- **Behavior**: On a machine with more than one NVIDIA GPU, the container must be given only the supported GPU, because the entrypoint only checks the first GPU that `nvidia-smi` lists.
-- **Resolution**: Expose only the single supported 24 GB+ GPU to the container (e.g. using `device_ids: ['0']` under Compose reservations, or `NVIDIA_VISIBLE_DEVICES=0`).
-
-### 9. Harmless Startup Notice: `driverInitFileInfo ... result=11`
-- **Behavior**: At container startup, the log shows `ERROR: driverInitFileInfo 599 result=11 ERROR: init 685 result=11 ERROR: init 250 result=11` before the model loads.
-- **Resolution**: Harmless. Emitted by the host NVIDIA driver's `libnvidia-sandboxutils.so` when optional container sandbox configuration files are not present; the driver falls back cleanly to direct access and CUDA initializes normally.
-
 ---
 ## AGPL-3.0 License & Credits
 

@@ -80,9 +80,6 @@ services:
               count: 1
               capabilities: [gpu]
 ```
-### Multi-GPU Hosts
-On a machine with more than one NVIDIA GPU, the container must be given only the supported GPU (e.g., using `device_ids: ['0']` under reservations or `NVIDIA_VISIBLE_DEVICES=0`), because the entrypoint only checks the first GPU that `nvidia-smi` lists.
-
 ### Note on Concurrency and Slots
 With `PARALLEL > 1`, requests are decoded together in slots where each slot holds its own KV cache of `--ctx` positions (`PARALLEL=1` is the tested default). When using `AGENTS=N`, all remaining memory is pooled across N agent slots (`-c 0`). Total GPU VRAM limits how many slots fit on a 24 GB card.
 
