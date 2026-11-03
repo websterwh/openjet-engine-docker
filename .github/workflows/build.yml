@@ -59,7 +59,7 @@ jobs:
 
       - name: Run shellcheck on entrypoint scripts
         run: |
-          shellcheck docker/entrypoint.sh docker/test_entrypoint.sh
+          shellcheck docker/entrypoint.sh docker/test_entrypoint.sh docker/test_idle_proxy.sh
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -252,6 +252,14 @@ jobs:
             -v "$GITHUB_WORKSPACE/docker/test_entrypoint.sh:/test_entrypoint.sh:ro" \
             --entrypoint bash \
             "$VERSION_TAG" /test_entrypoint.sh
+
+          echo "=========================================================="
+          echo " Smoke Test 5: Verify idle-unload proxy and test suite"
+          echo "=========================================================="
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/docker:/opt/docker:ro" \
+            --entrypoint bash \
+            "$VERSION_TAG" /opt/docker/test_idle_proxy.sh
       - name: Retag previous and promote latest Tag (from Pinned Build only)
         env:
           IMAGE_REPO: ${{ steps.vars.outputs.image_repo }}
