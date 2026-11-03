@@ -90,5 +90,28 @@ echo "=== Case 5: PUID=500 and PGID=500 ==="
 OUT5=$(env -i PATH="$SYS_PATH" MODEL_DIR="$MODEL_DIR" MODEL_FILE="$MODEL_FILE" UPDATE_MODEL="$UPDATE_MODEL" PUID=500 PGID=500 "$ENTRYPOINT_BIN")
 echo "$OUT5" | grep -F "STUB_OUTPUT: uid=500 gid=500"
 echo "Case 5 PASSED"
+echo
 
-echo "ALL 5 ENTRYPOINT TEST CASES PASSED CLEANLY!"
+echo "=== Case 6: PARALLEL empty with AGENTS=2 (must omit --parallel flag) ==="
+OUT6=$(env -i PATH="$SYS_PATH" MODEL_DIR="$MODEL_DIR" MODEL_FILE="$MODEL_FILE" UPDATE_MODEL="$UPDATE_MODEL" PARALLEL="" AGENTS=2 "$ENTRYPOINT_BIN")
+echo "$OUT6" | grep -F "STUB_OUTPUT:"
+echo "$OUT6" | grep -F -- "--agents 2"
+if echo "$OUT6" | grep -F -- "--parallel"; then
+    echo "ERROR: --parallel flag should be omitted when PARALLEL is empty" >&2
+    exit 1
+fi
+echo "Case 6 PASSED"
+echo
+
+echo "=== Case 7: PARALLEL whitespace only with AGENTS=2 (must omit --parallel flag) ==="
+OUT7=$(env -i PATH="$SYS_PATH" MODEL_DIR="$MODEL_DIR" MODEL_FILE="$MODEL_FILE" UPDATE_MODEL="$UPDATE_MODEL" PARALLEL="   " AGENTS=2 "$ENTRYPOINT_BIN")
+echo "$OUT7" | grep -F "STUB_OUTPUT:"
+echo "$OUT7" | grep -F -- "--agents 2"
+if echo "$OUT7" | grep -F -- "--parallel"; then
+    echo "ERROR: --parallel flag should be omitted when PARALLEL is whitespace" >&2
+    exit 1
+fi
+echo "Case 7 PASSED"
+echo
+
+echo "ALL 7 ENTRYPOINT TEST CASES PASSED CLEANLY!"

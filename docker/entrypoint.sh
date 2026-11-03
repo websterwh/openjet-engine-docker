@@ -33,20 +33,21 @@ fi
 export HF_HOME="${HF_HOME:-/models/.cache/huggingface}"
 
 # 1. Parallel and Agent slot configuration
+# Normalize whitespace
+PARALLEL="$(echo -n "${PARALLEL:-}" | tr -d '[:space:]')"
+AGENTS="$(echo -n "${AGENTS:-}" | tr -d '[:space:]')"
+
 # Refuse to start if both PARALLEL and AGENTS are set in environment
-if [ -n "${PARALLEL:-}" ] && [ -n "${AGENTS:-}" ]; then
+if [ -n "${PARALLEL}" ] && [ -n "${AGENTS}" ]; then
     echo "ERROR: Both PARALLEL ('${PARALLEL}') and AGENTS ('${AGENTS}') are set in the environment." >&2
     echo "Refusing to start: choose only one (--parallel for fixed slots or --agents for dynamic pooled slots)." >&2
     exit 1
 fi
 
 # Set default: if neither PARALLEL nor AGENTS is set, default to PARALLEL=1
-if [ -z "${PARALLEL:-}" ] && [ -z "${AGENTS:-}" ]; then
+if [ -z "${PARALLEL}" ] && [ -z "${AGENTS}" ]; then
     PARALLEL=1
 fi
-
-PARALLEL="${PARALLEL:-}"
-AGENTS="${AGENTS:-}"
 
 # Context default: keep CTX=100000 as default when PARALLEL=1
 if [ "${PARALLEL}" = "1" ]; then

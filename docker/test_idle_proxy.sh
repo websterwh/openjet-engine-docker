@@ -79,8 +79,16 @@ MOCK_ENV=(
 # Test (h): IDLE_TIMEOUT=0 leaves old exec path unchanged
 echo "Testing IDLE_TIMEOUT=0 direct execution..."
 OUT_IDLE_0=$(env -i "${MOCK_ENV[@]}" IDLE_TIMEOUT=0 "${DIR}/entrypoint.sh")
-echo "$OUT_IDLE_0" | grep -F "MOCK_ENGINE: args:"
-echo "$OUT_IDLE_0" | grep -F -- "--host 0.0.0.0 --port 18080"
+ARGS_LINE=$(echo "$OUT_IDLE_0" | grep -F "MOCK_ENGINE: args:")
+echo "$ARGS_LINE"
+if ! echo "$ARGS_LINE" | grep -F -- "--host 0.0.0.0 --port 18080" > /dev/null; then
+    echo "ERROR: Expected --host 0.0.0.0 --port 18080 in engine args" >&2
+    exit 1
+fi
+if ! echo "$ARGS_LINE" | grep -F -- "--parallel 1" > /dev/null; then
+    echo "ERROR: Expected --parallel 1 in engine args" >&2
+    exit 1
+fi
 if echo "$OUT_IDLE_0" | grep -F "idle_proxy.py"; then
     echo "ERROR: idle_proxy.py should not be invoked when IDLE_TIMEOUT=0" >&2
     exit 1
