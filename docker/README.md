@@ -58,6 +58,7 @@ By design, this engine image contains **NO** fallback to `llama-server`. If the 
 | `HF_HOME` | Hugging Face download and metadata cache directory | `/models/.cache/huggingface` | Directory path (persists in models volume) |
 | `HOST` | Network interface address for the HTTP server to bind | `0.0.0.0` | IP address (e.g. `0.0.0.0`, `127.0.0.1`) |
 | `PORT` | TCP port for the HTTP server | `18080` | Port number (integer) |
+| `IDLE_TIMEOUT` | Minutes of no requests before the engine is stopped to free GPU memory. 0 disables. The first request after an unload waits for the model to load (about 30 s) and starts with an empty cache. | `0` | Non-negative integer (e.g. `0`, `15`) |
 | `CTX` | Context window size in token positions | `100000` (for `PARALLEL=1`) | Integer (e.g. `32768`, `65536`, `100000`) |
 | `DRAFT` | Number of speculative MTP draft tokens per cycle | `4` | Integer (typically `2` to `5`; `0` disables speculation) |
 | `KV` | KV cache storage format | `auto` | `auto`, `f16`, `q8` (`auto` selects `q8_0` when fp16 does not fit) |

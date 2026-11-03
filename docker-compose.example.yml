@@ -18,6 +18,7 @@ services:
       # Server network binding
       - HOST=0.0.0.0
       - PORT=18080
+      # - IDLE_TIMEOUT=15
       # Inference parameters
       - CTX=100000
       - DRAFT=4
