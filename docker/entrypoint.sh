@@ -19,11 +19,17 @@ MODEL_FILE="${MODEL_FILE:-Qwen3.8-27B-Q4_K_M.gguf}"
 MODEL_DIR="${MODEL_DIR:-/models}"
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-18080}"
+INTERNAL_PORT="${INTERNAL_PORT:-18081}"
+IDLE_TIMEOUT="${IDLE_TIMEOUT:-0}"
 DRAFT="${DRAFT:-4}"
 KV="${KV:-auto}"
 UPDATE_MODEL="${UPDATE_MODEL:-1}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 
+if ! [[ "$IDLE_TIMEOUT" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: IDLE_TIMEOUT must be a non-negative integer (got '${IDLE_TIMEOUT}')." >&2
+    exit 1
+fi
 export HF_HOME="${HF_HOME:-/models/.cache/huggingface}"
 
 # 1. Parallel and Agent slot configuration
@@ -111,7 +117,7 @@ if [ "$VRAM_MIB" -lt 23000 ]; then
 fi
 
 # 3. Select matching precompiled megakernel library
-LIB_PATH="/opt/open-jet/libs/libqwen38mk_${ARCH}.so"
+LIB_PATH="${LIB_PATH:-/opt/open-jet/libs/libqwen38mk_${ARCH}.so}"
 if [ ! -f "$LIB_PATH" ]; then
     echo "ERROR: Megakernel library for ${ARCH} not found at '${LIB_PATH}'." >&2
     exit 1
@@ -168,7 +174,7 @@ if [ ! -f "$TARGET_MODEL" ]; then
     exit 1
 fi
 
-DRAFT_VOCAB="/opt/open-jet/megakernel/draft_vocab_32k.bin"
+DRAFT_VOCAB="${DRAFT_VOCAB:-/opt/open-jet/megakernel/draft_vocab_32k.bin}"
 if [ ! -f "$DRAFT_VOCAB" ]; then
     echo "ERROR: Draft vocabulary file not found at '${DRAFT_VOCAB}'." >&2
     exit 1
@@ -179,6 +185,9 @@ echo " Starting openjet-engine with configuration:"
 echo " Model:          ${TARGET_MODEL}"
 echo " Host:           ${HOST}"
 echo " Port:           ${PORT}"
+if [ "$IDLE_TIMEOUT" -gt 0 ]; then
+    echo " Idle Timeout:   ${IDLE_TIMEOUT} min (internal port: ${INTERNAL_PORT})"
+fi
 if [ -n "${CTX}" ]; then
     echo " Context:        ${CTX}"
 fi
@@ -205,11 +214,18 @@ echo "=========================================================="
 
 # 5. Build openjet-engine command
 # Pass flags to openjet-engine ONLY when set
+ENGINE_HOST="$HOST"
+ENGINE_PORT="$PORT"
+if [ "$IDLE_TIMEOUT" -gt 0 ]; then
+    ENGINE_HOST="127.0.0.1"
+    ENGINE_PORT="$INTERNAL_PORT"
+fi
+
 CMD=(
     openjet-engine
     -m "$TARGET_MODEL"
-    --host "$HOST"
-    --port "$PORT"
+    --host "$ENGINE_HOST"
+    --port "$ENGINE_PORT"
     -d "$DRAFT"
     --draft-vocab "$DRAFT_VOCAB"
     --lib "$LIB_PATH"
@@ -237,8 +253,16 @@ if [ "${NO_SHARED_PREFIX:-0}" = "1" ] || [ "${NO_SHARED_PREFIX:-false}" = "true"
 fi
 
 if [ -n "${EXTRA_ARGS}" ]; then
-    # shellcheck disable=SC2086
-    set -- "${CMD[@]}" $EXTRA_ARGS
+    # shellcheck disable=SC2086,SC2206
+    CMD+=($EXTRA_ARGS)
+fi
+
+if [ "$IDLE_TIMEOUT" -gt 0 ]; then
+    PROXY_BIN="/usr/local/bin/idle_proxy.py"
+    if [ ! -f "$PROXY_BIN" ]; then
+        PROXY_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/idle_proxy.py"
+    fi
+    set -- python3 "$PROXY_BIN" --host "$HOST" --port "$PORT" --internal-port "$INTERNAL_PORT" --idle-timeout "$IDLE_TIMEOUT" -- "${CMD[@]}"
 else
     set -- "${CMD[@]}"
 fi

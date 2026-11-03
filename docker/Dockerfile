@@ -129,10 +129,10 @@ COPY LICENSE /licenses/LICENSE.openjet
 COPY SOURCE.md /licenses/SOURCE.md
 COPY --from=builder /opt/open-jet/llama.cpp/LICENSE /licenses/LICENSE.llama.cpp
 
-# Copy entrypoint script
+# Copy entrypoint and idle proxy scripts
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
-
+COPY docker/idle_proxy.py /usr/local/bin/idle_proxy.py
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/idle_proxy.py
 # Prepare models directory and grant read permissions to libs
 RUN mkdir -p /models \
     && chmod -R a+rX /opt/open-jet /opt/venv /licenses
@@ -143,6 +143,7 @@ ENV MODEL_REPO=lmstudio-community/Qwen3.8-27B-GGUF \
     MODEL_DIR=/models \
     HOST=0.0.0.0 \
     PORT=18080 \
+    IDLE_TIMEOUT=0 \
     CTX=100000 \
     DRAFT=4 \
     KV=auto \
